@@ -11,6 +11,7 @@ const pool = new Pool({
   max: config.db.max,
   idleTimeoutMillis: config.db.idleTimeoutMillis,
   connectionTimeoutMillis: config.db.connectionTimeoutMillis,
+  client_encoding: 'UTF8',
 });
 
 pool.on('error', (err) => {

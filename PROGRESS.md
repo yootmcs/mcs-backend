@@ -128,6 +128,8 @@ mcs-backend/
         ├── 001_create_rfid_schema.sql
         ├── 002_seed_data.sql
         ├── 003_add_packing_expected.sql
+        ├── 004_fix_thai_names.sql
+        ├── runSql.js              # node SQL runner (UTF-8 safe บน Windows)
         ├── rfid_simulator.js
         └── e2e_demo.js
 ```
@@ -208,4 +210,5 @@ Get-Content 001_create_rfid_schema.sql -Raw -Encoding UTF8 | & "C:\Program Files
 ## ⚠️ หมายเหตุ
 - **รหัสผ่าน DB** (`admin123`) เก็บใน `.env` — อยู่ใน `.gitignore` แล้ว ไม่ถูก commit
 - ภาษาไทยใน Windows console อาจแสดงเป็น `???` — พิมพ์ `chcp 65001` ก่อน หรือดูจาก API response (เป็น UTF-8 ถูกต้อง)
-- โฟลเดอร์โปรเจกต์มีอักขระไทยในพาธ → เวลารัน `psql -f` ตรงๆ จะ error ให้ pipe ผ่าน stdin แทน
+- **SQL ที่มีภาษาไทย ต้องรันผ่าน `node src/scripts/runSql.js <file>`** ห้ามใช้ `Get-Content | psql` (PowerShell pipe แปลงไทยเป็น `?` ก่อนถึง Postgres → ข้อมูลเสียถาวร) — pg ใช้ UTF8 อยู่แล้ว, ปัญหาอยู่ที่ pipe ไม่ใช่ connection
+- ต้นเหตุที่ชื่อสินค้าเคยเป็น `?`: seed รอบแรกส่งผ่าน pipe → แก้ด้วย `004_fix_thai_names.sql` (รันผ่าน node runner) แล้ว
