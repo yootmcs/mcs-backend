@@ -49,11 +49,31 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 - Re-runnable (มี `ON CONFLICT` / `NOT EXISTS` guard)
 
 ### 5. RFID Scan API + Simulator
-- **`POST /api/rfid/scan`** — รับ `epc_codes[]` แล้วค้นหา tag/product (แยก matched / unknown)
+- **`POST /api/rfid/scan`** — สแกน `epc_codes[]` แล้วทำงานครบวงจร (ห่อใน DB transaction):
+  1. สร้าง `stock_transactions` (`sell`, qty −1) ต่อ tag ที่ยัง `active` → trigger ปรับ `stock_levels`
+  2. อัปเดต `rfid_tags.status='sold'`, `eas_active=false`
+  3. เตือนใกล้หมดอายุ (`exp_date <= CURRENT_DATE + 30`)
+  4. เตือนสต็อกต่ำ (`qty_available < qty_min_alert`)
+  - กันขายซ้ำ: tag ที่ขายแล้วคืน `action: "skipped"` (ไม่ทำสต็อกติดลบ)
+  - response: `{ matched, unknown, warnings: { expired_soon, low_stock } }` (+ `sold_count`)
   - `src/controllers/rfid.controller.js`, `src/routes/rfid.routes.js`
+  - ทดสอบแล้ว: ขาย 2 tag → stock 4→2, low_stock alert, สแกนซ้ำ → skipped ✅
 - **`src/scripts/rfid_simulator.js`** — จำลองเครื่องอ่าน RFID
   - โหลด EPC จากฐานข้อมูล → สุ่ม 1–5 ชิ้น → POST ทุก 3 วินาที → Ctrl+C หยุด
   - ทดสอบแล้ว: สแกน + จับคู่ product ถูกต้อง ✅
+
+### 6. Products & Stock API
+**ไฟล์:** `product.controller.js` / `stock.controller.js` + routes (ลงทะเบียนใน `routes/index.js`)
+- **`GET /api/products`** — ดูสินค้าทั้งหมด (พร้อม `count`)
+- **`POST /api/products`** — เพิ่มสินค้าใหม่ (validate `sku`/`name`/`product_type`; sku ซ้ำ → 409)
+- **`GET /api/products/:id`** — ดูรายชิ้น (ไม่เจอ → 404, uuid ผิดรูป → 400)
+- **`GET /api/stock`** — join ชื่อสินค้า, แสดง `qty_total`/`qty_available`, ธง `low_stock` + `low_stock_count`
+- ทดสอบแล้วครบทุก endpoint + error case ✅
+
+### 7. Git + GitHub
+- `git init` → commit แรก `initial: RFID schema + products + stock + scan API`
+- ยืนยัน `.env` / `node_modules` ไม่ถูก track (มีแค่ `.env.example`)
+- push ขึ้น GitHub repo `mcs-backend` แล้ว ✅
 
 ---
 
@@ -73,12 +93,16 @@ mcs-backend/
     │   ├── index.js          # อ่านค่าจาก env
     │   └── db.js             # PostgreSQL pool
     ├── routes/
-    │   ├── index.js          # /health, /rfid
+    │   ├── index.js          # /health, /rfid, /products, /stock
     │   ├── health.routes.js
-    │   └── rfid.routes.js
+    │   ├── rfid.routes.js
+    │   ├── product.routes.js
+    │   └── stock.routes.js
     ├── controllers/
     │   ├── health.controller.js
-    │   └── rfid.controller.js
+    │   ├── rfid.controller.js
+    │   ├── product.controller.js
+    │   └── stock.controller.js
     ├── middlewares/
     │   ├── errorHandler.js
     │   └── notFound.js
@@ -100,7 +124,11 @@ mcs-backend/
 | --- | --- | --- |
 | GET | `/api/health` | เช็ค service |
 | GET | `/api/health/db` | เช็คการเชื่อมต่อ DB |
-| POST | `/api/rfid/scan` | ค้นหา EPC → tag/product |
+| POST | `/api/rfid/scan` | สแกน EPC → ขาย + อัปเดต status + warnings |
+| GET | `/api/products` | ดูสินค้าทั้งหมด |
+| POST | `/api/products` | เพิ่มสินค้าใหม่ |
+| GET | `/api/products/:id` | ดูสินค้ารายชิ้น |
+| GET | `/api/stock` | ยอดคงเหลือ + แจ้งเตือนสต็อกต่ำ |
 
 ---
 
@@ -125,14 +153,16 @@ Get-Content 001_create_rfid_schema.sql -Raw -Encoding UTF8 | & "C:\Program Files
 
 ## 🎯 ขั้นถัดไปที่แนะนำ (ยังไม่ได้ทำ)
 
-1. **ทำให้การสแกนมีผลจริง** — `/api/rfid/scan` ตอนนี้เป็นแค่ read-only lookup
-   - สแกนแล้วสร้าง `stock_transactions` (ขาย/นับสต็อก)
-   - เปลี่ยน `rfid_tags.status` → `sold`
-   - เช็ค EAS / แจ้งเตือนสินค้าใกล้หมดอายุ
-2. **API สินค้า/สต็อก** — `/api/products`, `/api/stock` (CRUD)
-3. **Packing flow** — ใช้ตาราง `packing_sessions`
-4. **`qty_reserved` logic** — ปัจจุบัน trigger ยังไม่แตะยอดจอง
-5. **git init** — โฟลเดอร์ยังไม่ใช่ git repo
+1. **Packing flow** — ใช้ตาราง `packing_sessions` (verify → pack → ship)
+2. **`qty_reserved` logic** — ปัจจุบัน trigger/scan ยังไม่แตะยอดจอง
+3. **CRUD ที่เหลือ** — `PUT/DELETE /api/products`, endpoint สำหรับ `stock_transactions`
+4. **API docs / test** — ไฟล์ `.http` หรือ Swagger, unit/integration test
+5. **CI/CD** — GitHub Actions รัน lint/test อัตโนมัติ
+
+### ✅ ทำเสร็จแล้ว (จากรายการเดิม)
+- ~~ทำให้การสแกนมีผลจริง~~ → scan สร้าง sell txn + อัปเดต status + warnings แล้ว
+- ~~API สินค้า/สต็อก~~ → `/api/products`, `/api/stock` แล้ว
+- ~~git init + push~~ → ขึ้น GitHub แล้ว
 
 ---
 
