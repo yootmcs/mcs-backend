@@ -70,7 +70,15 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 - **`GET /api/stock`** — join ชื่อสินค้า, แสดง `qty_total`/`qty_available`, ธง `low_stock` + `low_stock_count`
 - ทดสอบแล้วครบทุก endpoint + error case ✅
 
-### 7. Git + GitHub
+### 7. Packing API
+**ไฟล์:** `packing.controller.js` + routes; migration `003_add_packing_expected.sql` (เพิ่ม `expected_epc_codes text[]`)
+- **`POST /api/packing/start`** — สร้าง session (`pending`) เก็บ expected EPC → คืน `packing_id`
+- **`POST /api/packing/verify`** — เทียบ scanned vs expected → คืน `{ verified, matched, missing, extra }`
+  - ถ้า `verified` (ครบพอดี ไม่ขาดไม่เกิน): session → `packed` + `is_verified`, บันทึก `pack` txn (−1) + tags → `sold` (atomic)
+- **`GET /api/packing/:packing_id`** — ดูสถานะ session
+- ทดสอบแล้ว: mismatch → ไม่ผ่าน, match → packed + stock ลด + tags sold ✅
+
+### 8. Git + GitHub
 - `git init` → commit แรก `initial: RFID schema + products + stock + scan API`
 - ยืนยัน `.env` / `node_modules` ไม่ถูก track (มีแค่ `.env.example`)
 - push ขึ้น GitHub repo `mcs-backend` แล้ว ✅
@@ -129,6 +137,9 @@ mcs-backend/
 | POST | `/api/products` | เพิ่มสินค้าใหม่ |
 | GET | `/api/products/:id` | ดูสินค้ารายชิ้น |
 | GET | `/api/stock` | ยอดคงเหลือ + แจ้งเตือนสต็อกต่ำ |
+| POST | `/api/packing/start` | สร้าง packing session (เก็บ expected EPC) |
+| POST | `/api/packing/verify` | เทียบ scanned vs expected → packed + pack txn |
+| GET | `/api/packing/:packing_id` | ดูสถานะ packing session |
 
 ---
 
