@@ -1,0 +1,28 @@
+{
+  "name": "mcs-backend",
+  "version": "1.0.0",
+  "description": "MCS CRM backend API (Node.js + Express + PostgreSQL)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "db:test": "node src/scripts/testConnection.js",
+    "rfid:sim": "node src/scripts/rfid_simulator.js"
+  },
+  "keywords": [
+    "mcs",
+    "crm",
+    "express",
+    "postgresql"
+  ],
+  "author": "MCS",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.13.1"
+  }
+}
