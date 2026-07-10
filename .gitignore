@@ -11,6 +11,12 @@ logs/
 *.log
 npm-debug.log*
 
+# Temp server output from test runs
+srv.out
+srv.err
+boot.log
+boot.err
+
 # OS / editor
 .DS_Store
 Thumbs.db
