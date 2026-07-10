@@ -16,6 +16,8 @@ srv.out
 srv.err
 boot.log
 boot.err
+s.out
+s.err
 
 # OS / editor
 .DS_Store
