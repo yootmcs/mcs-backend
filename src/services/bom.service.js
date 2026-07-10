@@ -12,16 +12,17 @@ function httpErr(status, message, data) {
   return e;
 }
 
-// วัตถุดิบที่ต้องใช้ = qty_required * (planned_qty / output_qty)
+// วัตถุดิบที่ต้องใช้จริง = qty_required * planned_qty * (1 + loss_pct/100)
+// เผื่อของเสียตาม expected_loss_pct (เช่น ผลิต 10 loss 15% ต้องใช้วัตถุดิบ x1.15)
 function computeRequired(bom, items, plannedQty) {
-  const scale = Number(plannedQty) / Number(bom.output_qty);
+  const lossFactor = 1 + Number(bom.expected_loss_pct || 0) / 100;
   return items.map((it) => ({
     material_id: it.material_id,
     material_code: it.material_code,
     material_name: it.material_name,
     unit: it.unit,
-    qty_per_batch: Number(it.qty_required),
-    required_qty: round3(Number(it.qty_required) * scale),
+    qty_per_unit: Number(it.qty_required),
+    required_qty: round3(Number(it.qty_required) * Number(plannedQty) * lossFactor),
   }));
 }
 
@@ -168,16 +169,37 @@ exports.completeOrder = async (id, payload) => {
 
     let finishedStock = null;
     if (order.bom_type === 'packaging' && order.output_product_id) {
-      // เพิ่มสินค้าสำเร็จรูปเข้า stock_levels ผ่าน stock_transactions (trigger อัปเดตให้)
+      // packaging → สินค้าสำเร็จรูปเข้า stock_levels ผ่าน stock_transactions (trigger อัปเดตให้)
       await client.query(
         `INSERT INTO stock_transactions (product_id, txn_type, qty_change, note, staff_id)
          VALUES ($1, 'receive', $2, $3, $4)`,
         [order.output_product_id, payload.qty_produced, `ผลิตเสร็จ ${order.order_no}`, payload.staff_id ?? null]
       );
-      finishedStock = (await client.query(
-        'SELECT qty_total, qty_available FROM stock_levels WHERE product_id = $1',
-        [order.output_product_id]
-      )).rows[0] || null;
+      finishedStock = {
+        target: 'product',
+        ...(await client.query(
+          'SELECT qty_total, qty_available FROM stock_levels WHERE product_id = $1',
+          [order.output_product_id]
+        )).rows[0],
+      };
+    } else if (order.bom_type === 'roasting' && order.output_material_id) {
+      // roasting → วัตถุดิบกึ่งสำเร็จเข้า warehouse_stock (เก็บไว้ให้ packaging ใช้ต่อ)
+      await client.query(
+        `INSERT INTO warehouse_stock (material_id, qty_total, qty_available, updated_at)
+         VALUES ($1, $2, $2, now())
+         ON CONFLICT (material_id) DO UPDATE
+           SET qty_total     = warehouse_stock.qty_total + $2,
+               qty_available = warehouse_stock.qty_available + $2,
+               updated_at    = now()`,
+        [order.output_material_id, payload.qty_produced]
+      );
+      finishedStock = {
+        target: 'warehouse',
+        ...(await client.query(
+          'SELECT qty_total, qty_available FROM warehouse_stock WHERE material_id = $1',
+          [order.output_material_id]
+        )).rows[0],
+      };
     }
 
     await client.query('COMMIT');

@@ -9,10 +9,11 @@ const Materials = {
 
   create: (db = pool, m) =>
     db.query(
+      // qty_min_alert เป็น numeric — default ที่ JS เลี่ยง pg เดา type จาก COALESCE literal เป็น integer
       `INSERT INTO raw_materials (code, name, category, unit, unit_cost, qty_min_alert)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 10))
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [m.code, m.name, m.category, m.unit, m.unit_cost ?? null, m.qty_min_alert ?? null]
+      [m.code, m.name, m.category, m.unit, m.unit_cost ?? null, m.qty_min_alert ?? 10]
     ),
 };
 

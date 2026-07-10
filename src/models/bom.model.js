@@ -5,17 +5,21 @@ const Bom = {
   list: (db = pool) =>
     db.query(
       `SELECT b.*, p.sku AS output_sku, p.name AS output_product_name,
+              rm.code AS output_material_code, rm.name AS output_material_name,
               (SELECT count(*) FROM bom_items bi WHERE bi.bom_id = b.bom_id) AS n_items
          FROM bom_templates b
          LEFT JOIN products p ON p.product_id = b.output_product_id
+         LEFT JOIN raw_materials rm ON rm.material_id = b.output_material_id
         ORDER BY b.code`
     ),
 
   getById: (db = pool, id) =>
     db.query(
-      `SELECT b.*, p.sku AS output_sku, p.name AS output_product_name
+      `SELECT b.*, p.sku AS output_sku, p.name AS output_product_name,
+              rm.code AS output_material_code, rm.name AS output_material_name
          FROM bom_templates b
          LEFT JOIN products p ON p.product_id = b.output_product_id
+         LEFT JOIN raw_materials rm ON rm.material_id = b.output_material_id
         WHERE b.bom_id = $1`,
       [id]
     ),
@@ -23,10 +27,10 @@ const Bom = {
   insert: (db, b) =>
     db.query(
       `INSERT INTO bom_templates
-           (code, name, bom_type, output_product_id, output_qty, output_unit, expected_loss_pct)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 0))
+           (code, name, bom_type, output_product_id, output_material_id, output_qty, output_unit, expected_loss_pct)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [b.code, b.name, b.bom_type, b.output_product_id ?? null, b.output_qty, b.output_unit, b.expected_loss_pct ?? null]
+      [b.code, b.name, b.bom_type, b.output_product_id ?? null, b.output_material_id ?? null, b.output_qty, b.output_unit, b.expected_loss_pct ?? 0]
     ),
 
   items: (db = pool, bomId) =>
@@ -59,9 +63,14 @@ const Prod = {
 
   list: (db = pool) =>
     db.query(
-      `SELECT po.*, b.code AS bom_code, b.name AS bom_name, b.bom_type
+      `SELECT po.*, b.code AS bom_code, b.name AS bom_name, b.bom_type, b.expected_loss_pct,
+              o.qty_produced, o.qty_loss
          FROM production_orders po
          JOIN bom_templates b USING (bom_id)
+         LEFT JOIN (
+           SELECT order_id, SUM(qty_produced) AS qty_produced, SUM(qty_loss) AS qty_loss
+             FROM production_outputs GROUP BY order_id
+         ) o USING (order_id)
         ORDER BY po.created_at DESC`
     ),
 
@@ -69,7 +78,7 @@ const Prod = {
     db.query(
       `SELECT po.*,
               b.code AS bom_code, b.name AS bom_name, b.bom_type,
-              b.output_qty, b.output_unit, b.output_product_id, b.expected_loss_pct
+              b.output_qty, b.output_unit, b.output_product_id, b.output_material_id, b.expected_loss_pct
          FROM production_orders po
          JOIN bom_templates b USING (bom_id)
         WHERE po.order_id = $1`,
@@ -87,10 +96,11 @@ const Prod = {
 
   insertOutput: (db, o) =>
     db.query(
+      // qty_loss เป็น numeric — default ที่ JS เพื่อเลี่ยง pg เดา type จาก COALESCE literal เป็น integer
       `INSERT INTO production_outputs (order_id, qty_produced, qty_loss, loss_reason, staff_id)
-       VALUES ($1, $2, COALESCE($3, 0), $4, $5)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [o.order_id, o.qty_produced, o.qty_loss ?? null, o.loss_reason ?? null, o.staff_id ?? null]
+      [o.order_id, o.qty_produced, o.qty_loss ?? 0, o.loss_reason ?? null, o.staff_id ?? null]
     ),
 
   outputs: (db = pool, orderId) =>
