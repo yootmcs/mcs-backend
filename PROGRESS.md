@@ -74,11 +74,17 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 **ไฟล์:** `packing.controller.js` + routes; migration `003_add_packing_expected.sql` (เพิ่ม `expected_epc_codes text[]`)
 - **`POST /api/packing/start`** — สร้าง session (`pending`) เก็บ expected EPC → คืน `packing_id`
 - **`POST /api/packing/verify`** — เทียบ scanned vs expected → คืน `{ verified, matched, missing, extra }`
-  - ถ้า `verified` (ครบพอดี ไม่ขาดไม่เกิน): session → `packed` + `is_verified`, บันทึก `pack` txn (−1) + tags → `sold` (atomic)
+  - ถ้า `verified` (ครบพอดี ไม่ขาดไม่เกิน): session → `packed` + `is_verified`, บันทึก `pack` txn (−1) + tags → `sold` + `eas_active=false` (atomic)
+- **`POST /api/packing/ship`** — ยืนยันส่งออก: session `packed` → `shipped` (state ผิด → 409)
 - **`GET /api/packing/:packing_id`** — ดูสถานะ session
-- ทดสอบแล้ว: mismatch → ไม่ผ่าน, match → packed + stock ลด + tags sold ✅
+- ทดสอบแล้ว: mismatch → ไม่ผ่าน, match → packed + stock ลด + tags sold + EAS ปิด ✅
 
-### 8. Git + GitHub
+### 8. Register Tag + E2E Flow
+- **`POST /api/rfid/tags`** — ลงทะเบียน tag (`active`) + รับเข้าคลัง (`receive` +1) แบบ atomic; `receive:false` = ลงทะเบียนอย่างเดียว; epc ซ้ำ → 409
+- **`src/scripts/e2e_demo.js`** (`npm run demo:e2e`) — เดิน flow เต็ม (register→receive→pack→verify→ship) + assert ทุกขั้น + cleanup อัตโนมัติ
+- ทดสอบแล้ว: ผ่านครบทุก assert ✅
+
+### 9. Git + GitHub
 - `git init` → commit แรก `initial: RFID schema + products + stock + scan API`
 - ยืนยัน `.env` / `node_modules` ไม่ถูก track (มีแค่ `.env.example`)
 - push ขึ้น GitHub repo `mcs-backend` แล้ว ✅
@@ -121,7 +127,9 @@ mcs-backend/
         ├── testConnection.js
         ├── 001_create_rfid_schema.sql
         ├── 002_seed_data.sql
-        └── rfid_simulator.js
+        ├── 003_add_packing_expected.sql
+        ├── rfid_simulator.js
+        └── e2e_demo.js
 ```
 
 ---
@@ -137,9 +145,29 @@ mcs-backend/
 | POST | `/api/products` | เพิ่มสินค้าใหม่ |
 | GET | `/api/products/:id` | ดูสินค้ารายชิ้น |
 | GET | `/api/stock` | ยอดคงเหลือ + แจ้งเตือนสต็อกต่ำ |
+| POST | `/api/rfid/tags` | ลงทะเบียน tag ใหม่ + รับเข้าคลัง (stock +) |
 | POST | `/api/packing/start` | สร้าง packing session (เก็บ expected EPC) |
 | POST | `/api/packing/verify` | เทียบ scanned vs expected → packed + pack txn |
+| POST | `/api/packing/ship` | ยืนยันส่งออก (packed → shipped) |
 | GET | `/api/packing/:packing_id` | ดูสถานะ packing session |
+
+---
+
+## 🔄 End-to-End Flow (ทดสอบครบด้วย `npm run demo:e2e`)
+
+```
+ลงทะเบียน Tag → รับเข้าคลัง (stock +)     POST /api/rfid/tags
+      ↓
+เริ่ม Packing Session                      POST /api/packing/start
+      ↓
+สแกนของบนโต๊ะแพค → verify ครบไหม           POST /api/packing/verify
+      ↓
+ยืนยัน → Stock หัก + Tag = sold (EAS off)  (อยู่ใน /verify)
+      ↓
+พร้อมส่งออก → shipped                      POST /api/packing/ship
+```
+
+`src/scripts/e2e_demo.js` เดินไล่ทั้ง flow ผ่าน HTTP + assert ทุกขั้น แล้วล้างข้อมูล demo อัตโนมัติ (ใช้ `--keep` เพื่อเก็บไว้)
 
 ---
 

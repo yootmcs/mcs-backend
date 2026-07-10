@@ -1,0 +1,8 @@
+🚀 mcs-backend running on http://localhost:3000 [development]
+[0mPOST /api/products [32m201[0m 70.053 ms - 262[0m
+[0mPOST /api/rfid/tags [32m201[0m 13.899 ms - 433[0m
+[0mPOST /api/packing/start [32m201[0m 2.862 ms - 240[0m
+[0mPOST /api/packing/verify [32m200[0m 6.136 ms - 170[0m
+[0mGET /api/stock [32m200[0m 1.842 ms - 1414[0m
+[0mPOST /api/packing/ship [32m200[0m 1.402 ms - 190[0m
+[0mGET /api/packing/e8bfb92f-05a3-4eb9-9e0f-6e030312e2d8 [32m200[0m 3.218 ms - 294[0m

@@ -93,7 +93,7 @@ exports.verify = async (req, res, next) => {
           [t.product_id, t.tag_id, `Packing verified (order ${session.order_ref || 'n/a'})`, session.staff_id || null]
         );
         await client.query(
-          `UPDATE rfid_tags SET status = 'sold' WHERE tag_id = $1`,
+          `UPDATE rfid_tags SET status = 'sold', eas_active = false WHERE tag_id = $1`,
           [t.tag_id]
         );
       }
@@ -122,6 +122,47 @@ exports.verify = async (req, res, next) => {
     next(err);
   } finally {
     client.release();
+  }
+};
+
+// POST /api/packing/ship
+// body: { packing_id }
+// → เปลี่ยน session ที่ verified & packed แล้ว → 'shipped' (พร้อมส่งออก)
+exports.ship = async (req, res, next) => {
+  try {
+    const { packing_id: packingId } = req.body;
+    if (!packingId) {
+      return res.status(400).json({ status: 'error', message: 'packing_id is required' });
+    }
+
+    const { rows } = await query(
+      `UPDATE packing_sessions
+          SET status = 'shipped'
+        WHERE packing_id = $1 AND status = 'packed' AND is_verified = true
+        RETURNING packing_id, order_ref, status, is_verified, packed_at`,
+      [packingId]
+    );
+
+    if (rows.length === 0) {
+      const { rows: existing } = await query(
+        'SELECT status FROM packing_sessions WHERE packing_id = $1',
+        [packingId]
+      );
+      if (existing.length === 0) {
+        return res.status(404).json({ status: 'error', message: 'Packing session not found' });
+      }
+      return res.status(409).json({
+        status: 'error',
+        message: `cannot ship: session must be verified & packed (current status=${existing[0].status})`,
+      });
+    }
+
+    res.json({ status: 'ok', data: rows[0] });
+  } catch (err) {
+    if (err.code === '22P02') {
+      return res.status(400).json({ status: 'error', message: 'Invalid packing_id format' });
+    }
+    next(err);
   }
 };
 
