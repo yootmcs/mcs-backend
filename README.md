@@ -5,6 +5,16 @@
 
 รองรับ: ลงทะเบียน RFID tag, รับเข้าคลัง, ตัดสต็อกอัตโนมัติผ่าน trigger, สแกนขาย, และ flow การแพคสินค้า (packing) ครบวงจรจนพร้อมส่งออก
 
+> Frontend ที่ใช้คู่กัน: [mcs-frontend](https://github.com/yootmcs/mcs-frontend)
+
+---
+
+## 📸 ตัวอย่างหน้าจอ (Frontend)
+
+| Packing Station | Stock Dashboard |
+| --- | --- |
+| ![Packing Station](docs/screenshots/packing-station.png) | ![Stock Dashboard](docs/screenshots/stock-dashboard.png) |
+
 ---
 
 ## 1. โปรเจกต์นี้คืออะไร
@@ -196,3 +206,7 @@ mcs-backend/
 ## Stack
 
 Node.js · Express · PostgreSQL (pg) · helmet · cors · morgan · dotenv
+
+## License
+
+เผยแพร่ภายใต้ [MIT License](LICENSE)
