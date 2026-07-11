@@ -144,6 +144,16 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 - guard: Store ไม่พอ → 400 shortage · เมล็ดคั่วที่ได้ไม่พอบรรจุ → 400
 - ทดสอบ e2e (`npm run demo:mfg`) + smoke ตรง service: ✅ ผ่านครบ
 
+### 🆕 15. รวม 2 ระบบ → ระบบเดียว (ตามรอยรายล็อตเต็มสูบ) ⭐
+**ปัญหา:** ☕ โรงคั่ว (lot-based, สต็อกคู่ขนาน) ทำงานซ้ำกับ 🏭 สายการผลิต+คลัง.
+**ทางออก:** ยึดสาย 🏭 เป็นหลัก ดึงของดีจาก ☕ มาเสียบ (migration `012`–`014`).
+
+- **เฟส 1 (`012`):** ใบรับเข้าผูก `supplier_id` → ทะเบียน `suppliers` (เลิกพิมพ์ชื่อลอยๆ)
+- **เฟส 2 (`013`) หัวใจ:** green = **ล็อตล้วน** — `green_coffee_lots` มี `qty_central_kg`+`qty_store_kg` (เลิก `remaining_kg`, ไม่บันทึกซ้ำ). `green_lot_transfers` โอนคลังกลาง↔Store. ใบสั่งงานเลือก `green_lot_id`; ตอน `/complete` สร้าง `roast_batches` (trigger หัก `qty_store_kg`) + `finished_lots` (ตราวันคั่ว). **สาวรอย ถุง→คั่ว→ล็อต green→ซัพ** ผ่าน `GET /work-orders/finished-lots`
+- **เฟส 3 (`014`):** ขายถุงสำเร็จ FEFO — `finished_allocations` + `POST /finished-sales` ตัดล็อตคั่วก่อน-ออกก่อน + หัก `stock_levels`; ออเดอร์รู้ว่าส่งจากล็อตคั่วไหน
+- **หมายเหตุ:** คั่วผ่านแท็บ ☕ เดิมตอนนี้หัก `qty_store_kg` ด้วย (ต้องโอน green เข้า Store ก่อนคั่ว). `planned_roast_qty` = kg green ที่โหลด
+- ทดสอบ `npm run demo:mfg` (เขียนใหม่ 8 ขั้น: รับล็อต→โอน Store→ใบสั่งงานเลือกล็อต→คั่ว+บรรจุ→สาวรอย→**ขายถุง FEFO**) + cleanup อัตโนมัติ → ✅ ผ่านครบ (2026-07-11)
+
 ---
 
 ## 📁 โครงสร้างไฟล์ปัจจุบัน
