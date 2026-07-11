@@ -1,9 +1,13 @@
 # mcs-backend
 
-**MCS CRM Backend API + RFID Stock** — ระบบหลังบ้านสำหรับจัดการสินค้าคงคลังด้วย RFID
+**MCS CRM Backend API + RFID Stock + Manufacturing** — ระบบหลังบ้านสำหรับคลังวัตถุดิบ สายการผลิต และสินค้าคงคลัง RFID
 สร้างด้วย **Node.js + Express + PostgreSQL**
 
-รองรับ: ลงทะเบียน RFID tag, รับเข้าคลัง, ตัดสต็อกอัตโนมัติผ่าน trigger, สแกนขาย, และ flow การแพคสินค้า (packing) ครบวงจรจนพร้อมส่งออก
+รองรับครบวงจร:
+- **คลังวัตถุดิบ (Warehouse):** รับเข้า/จ่ายออกวัตถุดิบ + ตัดสต็อกอัตโนมัติผ่าน trigger
+- **การผลิต (Production + BOM):** สูตรการผลิต → เปิดใบสั่งผลิต → จอง/ตัดวัตถุดิบ → บันทึกผลผลิต
+- **RFID + Stock:** ลงทะเบียน tag, รับเข้าคลัง, สแกนขาย, ตัดสต็อกอัตโนมัติ
+- **Packing:** เริ่ม → สแกนตรวจสอบ → ยืนยัน → ส่งออก
 
 > Frontend ที่ใช้คู่กัน: [mcs-frontend](https://github.com/yootmcs/mcs-frontend)
 
@@ -102,12 +106,23 @@ npm run db:test
 
 ## 7. รัน SQL Schema (สร้างตาราง + trigger)
 
+รัน migration **ทั้งหมดตามลำดับ** (มีทั้ง RFID, Packing, Warehouse, BOM, Production):
+
 ```bash
 node src/scripts/runSql.js src/scripts/001_create_rfid_schema.sql
+node src/scripts/runSql.js src/scripts/003_add_packing_expected.sql
+node src/scripts/runSql.js src/scripts/005_create_warehouse_schema.sql
+node src/scripts/runSql.js src/scripts/007_create_bom_schema.sql
+node src/scripts/runSql.js src/scripts/008_add_bom_output_material.sql
 ```
 
-สร้าง 5 ตาราง: `products`, `rfid_tags`, `stock_levels`, `stock_transactions`, `packing_sessions`
-พร้อม trigger `trg_apply_stock_transaction` ที่อัปเดต `stock_levels` อัตโนมัติทุกครั้งที่มี transaction
+| Migration | สร้างอะไร |
+| --- | --- |
+| `001` | RFID/Stock: `products`, `rfid_tags`, `stock_levels`, `stock_transactions`, `packing_sessions` + trigger `trg_apply_stock_transaction` |
+| `003` | เพิ่ม `expected_epc_codes` ให้ `packing_sessions` |
+| `005` | Warehouse: `raw_materials`, `warehouse_stock`, `warehouse_receipts/_items`, `warehouse_issues/_items` + trigger รับเข้า/จ่ายออก |
+| `007` | BOM: `bom_templates`, `bom_items`, `production_orders`, `production_outputs` (+ seed 2 สูตร) |
+| `008` | เพิ่ม `output_material_id` ให้ BOM สาย roasting |
 
 > **สำคัญ (Windows):** ใช้ `node src/scripts/runSql.js` แทน `psql -f` หรือ `Get-Content | psql`
 > เพราะ PowerShell pipe จะแปลงภาษาไทยเป็น `?` ก่อนถึง Postgres ทำให้ข้อมูลเสีย
@@ -118,12 +133,16 @@ node src/scripts/runSql.js src/scripts/001_create_rfid_schema.sql
 
 ```bash
 node src/scripts/runSql.js src/scripts/002_seed_data.sql
+node src/scripts/runSql.js src/scripts/004_fix_thai_names.sql
+node src/scripts/runSql.js src/scripts/006_seed_raw_materials.sql
 ```
 
-ได้: 5 สินค้า (เมล็ดกาแฟ, ผงชาไทย, ไซรัปคาราเมล, ผงชาเขียว, ช็อคโกแลต),
-20 RFID tags (`MCS-CB-001` ถึง `MCS-CB-020`), และรับเข้าคลังเริ่มต้น
+ได้:
+- 5 สินค้า (เมล็ดกาแฟ, ผงชาไทย, ไซรัปคาราเมล, ผงชาเขียว, ช็อคโกแลต) + 20 RFID tags (`MCS-CB-001` ถึง `MCS-CB-020`)
+- **62 วัตถุดิบจริง** (เมล็ดกาแฟดิบ, ผง, ใบชา, ไซรัป, ครีม, บรรจุภัณฑ์) + เมล็ดคั่วกึ่งสำเร็จ = 63 รายการ
+- 2 สูตร BOM (`BOM-001` คั่วกาแฟ, `BOM-002` แพคถุง 500g) — มากับ migration `007`
 
-> ถ้าชื่อสินค้าภาษาไทยแสดงเป็น `?` ให้รัน `node src/scripts/runSql.js src/scripts/004_fix_thai_names.sql`
+> ถ้าชื่อภาษาไทยแสดงเป็น `?` สาเหตุมาจากการรันผ่าน pipe — รันไฟล์ seed ซ้ำด้วย `node src/scripts/runSql.js` (UTF-8 safe)
 
 ---
 
@@ -158,10 +177,35 @@ Base URL: `http://localhost:3000/api`
 | POST | `/packing/ship` | ยืนยันส่งออก (packed → shipped) |
 | GET | `/packing/:packing_id` | ดูสถานะ packing session |
 
+**🏭 Warehouse (คลังวัตถุดิบ)**
+
+| Method | Path | คำอธิบาย |
+| --- | --- | --- |
+| GET | `/warehouse/materials` | ดูวัตถุดิบทั้งหมด (กรอง `?category=BEAN\|POWDER\|LEAF\|SYRUP\|CREAM\|PKG`) |
+| POST | `/warehouse/materials` | เพิ่มวัตถุดิบใหม่ |
+| POST | `/warehouse/receipts` | รับวัตถุดิบเข้าคลัง (stock +) |
+| GET | `/warehouse/receipts` `/:id` | ดูใบรับเข้า |
+| POST | `/warehouse/issues` | จ่ายวัตถุดิบออก (stock −, กันติดลบ) |
+| GET | `/warehouse/issues` `/:id` | ดูใบจ่ายออก |
+| GET | `/warehouse/stock` | ยอดคงเหลือวัตถุดิบ + แจ้งเตือนต่ำ |
+
+**⚙️ BOM + Production (สูตร + สายการผลิต)**
+
+| Method | Path | คำอธิบาย |
+| --- | --- | --- |
+| GET/POST | `/bom` | ดู/สร้างสูตรการผลิต (roasting / packaging) |
+| GET | `/bom/:id` | ดูสูตร + ส่วนผสม |
+| POST | `/production/orders` | เปิดใบสั่งผลิต → เช็ค+จองวัตถุดิบ |
+| GET | `/production/orders` `/:id` | ดูใบสั่งผลิต |
+| POST | `/production/orders/:id/start` | เริ่มผลิต → ตัดวัตถุดิบจริง |
+| POST | `/production/orders/:id/complete` | จบผลิต → บันทึกผลผลิต เข้าสต็อก |
+
 ตัวอย่างเรียก:
 
 ```bash
 curl http://localhost:3000/api/stock
+curl http://localhost:3000/api/warehouse/stock
+curl http://localhost:3000/api/bom
 ```
 
 ---
@@ -197,10 +241,14 @@ mcs-backend/
 ├── src/
 │   ├── app.js                # Express app
 │   ├── config/               # env config + PostgreSQL pool
-│   ├── routes/               # health, rfid, products, stock, packing
+│   ├── routes/               # health, rfid, products, stock, packing,
+│   │                         #   warehouse, bom, production
 │   ├── controllers/          # request handlers
+│   ├── services/             # business logic (warehouse, bom/production)
+│   ├── models/               # data access (warehouse, bom)
 │   ├── middlewares/          # error handler, 404
-│   └── scripts/              # SQL migrations, seed, runners, demo
+│   ├── utils/                # handleDbError (pg error → HTTP)
+│   └── scripts/              # SQL migrations (001–008), seed, runners, demo
 ```
 
 ## Stack
