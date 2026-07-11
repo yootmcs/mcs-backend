@@ -50,6 +50,18 @@ Schema: `007_create_bom_schema.sql`, `008_add_bom_output_material.sql`
 
 **API โรงงาน:** `GET/POST /api/bom`, `GET /api/bom/:id` · `POST /api/production/orders`, `GET /orders`, `GET /orders/:id`, `POST /orders/:id/start`, `POST /orders/:id/complete`
 
+## โมดูลโรงคั่ว (Roastery) — โดเมน "ของจริง" ⭐ กำลังทำ
+ที่มา: prototype `../coffee-roastery-erp.jsx` (React single-file, เดิมเก็บใน browser). เป็นข้อมูลจริงที่ธุรกิจใช้ (seed เดิม BEAN-006/MRC-500 เป็นแค่ตัวอย่าง). โมเดลเป็นแบบ **ตามรอยรายล็อต (traceability)** ต่างจาก BOM เดิม.
+Schema: `009_create_roastery_schema.sql` (เพิ่มใหม่ ไม่แตะของเดิม). โค้ด: `roastery.{model,service,controller,routes}.js`.
+
+**6 ตาราง:** `suppliers` · `green_coffee_lots` (สารดิบรายล็อต: origin/variety/process_method/moisture/price, remaining_kg บนแถว) · `roast_batches` (คั่ว: roast_level 5 ระดับ, green_in/roasted_out, loss_pct+remaining คำนวณโดย trigger, operator/machine) · `packaging_items` · `sales_orders` (customer/destination/currency THB|USD|EUR|JPY, status pending|packing|shipped) · `sales_order_allocations` (จัดสรรคั่ว→ออเดอร์)
+
+**Triggers ตัด/คืนสต็อกอัตโนมัติ:** คั่ว → หัก `green_coffee_lots.remaining_kg` (กันติดลบ) + คำนวณ loss%; ลบล็อตคั่ว → คืนสารดิบ; allocation → หัก `roast_batches.remaining_roasted_kg`; ลบออเดอร์ → CASCADE + คืนคั่ว. รหัสออกอัตโนมัติ PREFIX-YYMM-NNN (SUP/GC/RB/EX) ใน service ภายใน transaction.
+
+**API (mount ที่ /api):** `/roastery/summary` (dashboard) · `/suppliers` · `/green-lots` · `/roast-batches` · `/packaging` · `/sales-orders` (+ `/:id/status`)
+
+**สถานะ:** backend เสร็จ + ทดสอบ end-to-end ผ่าน 8/8 (trigger ตัด/คืนสต็อกถูกต้อง). **ถัดไป: frontend** — ย้าย prototype เข้า `mcs-frontend` แล้วต่อ API แทน `window.storage`.
+
 ## คำสั่ง (รันในโฟลเดอร์ mcs-backend)
 | คำสั่ง | ทำอะไร |
 | --- | --- |
@@ -58,6 +70,7 @@ Schema: `007_create_bom_schema.sql`, `008_add_bom_output_material.sql`
 | `npm run db:test` | ทดสอบต่อฐานข้อมูล |
 | `npm run rfid:sim` | จำลองเครื่องสแกน RFID |
 | `npm run demo:e2e` | เทสต์ทั้งระบบ end-to-end |
+| `node src/scripts/runSql.js src/scripts/009_create_roastery_schema.sql` | สร้างตารางโรงคั่ว |
 | `node src/scripts/runSql.js src/scripts/00X_*.sql` | รัน migration ทีละไฟล์ |
 
 ## ข้อควรระวัง / convention
