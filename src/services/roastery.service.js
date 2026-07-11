@@ -1,7 +1,7 @@
 // Business logic layer — โมดูลโรงคั่ว (roastery)
 // ครอบ transaction ให้การออกรหัส + insert หลายแถว atomic; ปล่อยการตัดสต็อกให้ trigger
 const { pool } = require('../config/db');
-const { nextCode, Suppliers, GreenLots, Roasting, Packaging, SalesOrders } = require('../models/roastery.model');
+const { nextCode, Suppliers, GreenLots, GreenTransfers, Roasting, Packaging, SalesOrders } = require('../models/roastery.model');
 
 const LOW_RAW_THRESHOLD = 50; // กก. — สารกาแฟดิบเหลือน้อยกว่านี้ = แจ้งเตือน
 
@@ -62,6 +62,25 @@ exports.updateGreenLot = async (id, payload) => {
   const row = (await GreenLots.update(pool, id, payload)).rows[0];
   if (!row) throw httpErr(404, 'green lot not found');
   return row;
+};
+
+// ---- เบิกโอนล็อต green (คลังกลาง ↔ Store) — trigger ย้าย kg + กันติดลบ ----
+exports.listGreenTransfers = async () => (await GreenTransfers.list()).rows;
+
+exports.createGreenTransfer = async (payload) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const transferNo = payload.transfer_no || (await nextCode(client, 'green_lot_transfers', 'GT', 'transfer_no'));
+    const row = (await GreenTransfers.insert(client, transferNo, payload)).rows[0];
+    await client.query('COMMIT');
+    return row;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
 exports.deleteGreenLot = async (id) => {
@@ -178,17 +197,19 @@ exports.deleteSalesOrder = async (id) => {
 // ---- Dashboard summary (แดชบอร์ดภาพรวม) ----
 exports.dashboardSummary = async () => {
   const [green, roasted, batches, pending, lowRaw, lowPkg, byLevel] = await Promise.all([
-    pool.query('SELECT COALESCE(SUM(remaining_kg), 0) AS kg FROM green_coffee_lots'),
+    pool.query('SELECT COALESCE(SUM(qty_central_kg + qty_store_kg), 0) AS kg FROM green_coffee_lots'),
     pool.query('SELECT COALESCE(SUM(remaining_roasted_kg), 0) AS kg FROM roast_batches'),
     pool.query(`SELECT count(*) AS n FROM roast_batches
                  WHERE date_trunc('month', roast_date) = date_trunc('month', CURRENT_DATE)`),
     pool.query(`SELECT count(*) AS n FROM sales_orders WHERE status <> 'shipped'`),
     pool.query(
-      `SELECT g.code, g.origin, g.remaining_kg, s.name AS supplier_name
+      `SELECT g.code, g.origin, (g.qty_central_kg + g.qty_store_kg) AS remaining_kg,
+              g.qty_central_kg, g.qty_store_kg, s.name AS supplier_name
          FROM green_coffee_lots g
          LEFT JOIN suppliers s USING (supplier_id)
-        WHERE g.remaining_kg > 0 AND g.remaining_kg < $1
-        ORDER BY g.remaining_kg`,
+        WHERE (g.qty_central_kg + g.qty_store_kg) > 0
+          AND (g.qty_central_kg + g.qty_store_kg) < $1
+        ORDER BY (g.qty_central_kg + g.qty_store_kg)`,
       [LOW_RAW_THRESHOLD]
     ),
     pool.query(

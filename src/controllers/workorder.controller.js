@@ -6,10 +6,11 @@ const bad = (res, message) => res.status(400).json({ status: 'error', message })
 // POST /api/work-orders
 exports.create = async (req, res, next) => {
   try {
-    const { work_no, roast_bom_id, pack_bom_id, planned_roast_qty, planned_pack_qty } = req.body;
+    const { work_no, roast_bom_id, pack_bom_id, green_lot_id, planned_roast_qty, planned_pack_qty } = req.body;
     if (!work_no || !roast_bom_id || !pack_bom_id) {
       return bad(res, 'work_no, roast_bom_id, pack_bom_id are required');
     }
+    if (!green_lot_id) return bad(res, 'green_lot_id is required (เลือกล็อตเมล็ดที่จะคั่ว)');
     if (planned_roast_qty == null || Number(planned_roast_qty) <= 0) return bad(res, 'planned_roast_qty must be > 0');
     if (planned_pack_qty == null || Number(planned_pack_qty) <= 0) return bad(res, 'planned_pack_qty must be > 0');
     const data = await service.createOrder(req.body);
@@ -21,6 +22,14 @@ exports.create = async (req, res, next) => {
 exports.list = async (req, res, next) => {
   try {
     const data = await service.listOrders();
+    res.json({ status: 'ok', count: data.length, data });
+  } catch (err) { handleDbError(err, res, next); }
+};
+
+// GET /api/work-orders/finished-lots?product_id= — ล็อตถุงสำเร็จ + สายเลือดตามรอย
+exports.finishedLots = async (req, res, next) => {
+  try {
+    const data = await service.listFinishedLots(req.query.product_id || null);
     res.json({ status: 'ok', count: data.length, data });
   } catch (err) { handleDbError(err, res, next); }
 };

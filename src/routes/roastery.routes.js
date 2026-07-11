@@ -13,6 +13,10 @@ router.get('/suppliers', c.listSuppliers);
 router.post('/suppliers', c.createSupplier);
 router.patch('/suppliers/:id', c.updateSupplier);
 
+// เบิกโอนล็อต green (คลังกลาง ↔ Store) — ต้องมาก่อน /green-lots/:id
+router.get('/green-transfers', c.listGreenTransfers);
+router.post('/green-transfers', c.createGreenTransfer);
+
 // รับวัตถุดิบ / ล็อตสารกาแฟดิบ
 router.get('/green-lots', c.listGreenLots);
 router.post('/green-lots', c.createGreenLot);

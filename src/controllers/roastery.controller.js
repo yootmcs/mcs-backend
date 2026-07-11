@@ -31,6 +31,29 @@ exports.updateSupplier = async (req, res, next) => {
   } catch (err) { handleDbError(err, res, next); }
 };
 
+// ============ Green lot transfers (เบิกโอน คลังกลาง ↔ Store) ============
+const GREEN_DIRECTIONS = ['to_store', 'to_central'];
+
+exports.listGreenTransfers = async (req, res, next) => {
+  try {
+    const data = await service.listGreenTransfers();
+    res.json({ status: 'ok', count: data.length, data });
+  } catch (err) { handleDbError(err, res, next); }
+};
+
+exports.createGreenTransfer = async (req, res, next) => {
+  try {
+    const { lot_id, qty_kg, direction } = req.body;
+    if (!lot_id) return bad(res, 'lot_id is required');
+    if (qty_kg == null || Number(qty_kg) <= 0) return bad(res, 'qty_kg must be > 0');
+    if (direction && !GREEN_DIRECTIONS.includes(direction)) {
+      return bad(res, `direction must be one of: ${GREEN_DIRECTIONS.join(', ')}`);
+    }
+    const data = await service.createGreenTransfer(req.body);
+    res.status(201).json({ status: 'ok', data });
+  } catch (err) { handleDbError(err, res, next); }
+};
+
 // ============ Green coffee lots (รับวัตถุดิบ) ============
 exports.listGreenLots = async (req, res, next) => {
   try {

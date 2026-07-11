@@ -4,12 +4,13 @@ const { pool } = require('../config/db');
 
 // ---- ตัวช่วยออกรหัสอัตโนมัติ: PREFIX-YYMM-NNN (นับต่อเดือน) ----
 // ใช้ใน transaction เดียวกับการ insert เพื่อลดโอกาสรหัสชน
-const nextCode = async (db, table, prefix) => {
+// col = คอลัมน์ที่เก็บรหัส (ปกติ 'code'; บางตารางใช้ชื่ออื่น เช่น 'transfer_no')
+const nextCode = async (db, table, prefix, col = 'code') => {
   const ym = new Date().toISOString().slice(2, 7).replace('-', ''); // YYMM
   const like = `${prefix}-${ym}-%`;
   const { rows } = await db.query(
-    `SELECT COALESCE(MAX(CAST(split_part(code, '-', 3) AS int)), 0) AS max_seq
-       FROM ${table} WHERE code LIKE $1`,
+    `SELECT COALESCE(MAX(CAST(split_part(${col}, '-', 3) AS int)), 0) AS max_seq
+       FROM ${table} WHERE ${col} LIKE $1`,
     [like]
   );
   const seq = String(Number(rows[0].max_seq) + 1).padStart(3, '0');
@@ -40,9 +41,11 @@ const Suppliers = {
 };
 
 const GreenLots = {
+  // remaining_kg (derived) = คงเหลือรวมทั้งสองคลัง — เผื่อ UI เดิมที่ยังอ้างชื่อนี้
   list: (db = pool) =>
     db.query(
-      `SELECT g.*, s.name AS supplier_name
+      `SELECT g.*, (g.qty_central_kg + g.qty_store_kg) AS remaining_kg,
+              s.name AS supplier_name
          FROM green_coffee_lots g
          LEFT JOIN suppliers s USING (supplier_id)
         ORDER BY g.received_date DESC, g.code DESC`
@@ -50,18 +53,20 @@ const GreenLots = {
 
   getById: (db = pool, id) =>
     db.query(
-      `SELECT g.*, s.name AS supplier_name
+      `SELECT g.*, (g.qty_central_kg + g.qty_store_kg) AS remaining_kg,
+              s.name AS supplier_name
          FROM green_coffee_lots g
          LEFT JOIN suppliers s USING (supplier_id)
         WHERE g.lot_id = $1`,
       [id]
     ),
 
+  // รับ green เข้า → ลงช่องคลังกลาง (qty_central_kg = น้ำหนักที่รับ); ยังไม่มีที่ Store
   insert: (db, code, g) =>
     db.query(
       `INSERT INTO green_coffee_lots
            (code, supplier_id, received_date, origin, variety, process_method,
-            moisture_pct, weight_kg, remaining_kg, price_per_kg, note)
+            moisture_pct, weight_kg, qty_central_kg, price_per_kg, note)
        VALUES ($1, $2, COALESCE($3, CURRENT_DATE), $4, $5, COALESCE($6, 'washed'),
                $7, $8, $8, $9, $10)
        RETURNING *`,
@@ -87,6 +92,40 @@ const GreenLots = {
 
   usedInRoast: (db = pool, id) =>
     db.query('SELECT 1 FROM roast_batches WHERE lot_id = $1 LIMIT 1', [id]),
+
+  // ล็อคแถวล็อต + อ่านช่องคงเหลือ (ใช้ตอนจอง/ตรวจของก่อนเปิดใบสั่งงาน)
+  lockById: (db, id) =>
+    db.query(
+      'SELECT lot_id, code, qty_central_kg, qty_store_kg, qty_store_reserved_kg FROM green_coffee_lots WHERE lot_id = $1 FOR UPDATE',
+      [id]
+    ),
+
+  // ปรับยอดจองที่ Store (+/-) ของล็อต green (ไลน์ผลิตจองเมล็ดไว้ก่อนคั่ว)
+  addStoreReserved: (db, id, delta) =>
+    db.query(
+      `UPDATE green_coffee_lots SET qty_store_reserved_kg = qty_store_reserved_kg + $2
+        WHERE lot_id = $1 RETURNING *`,
+      [id, delta]
+    ),
+};
+
+// ใบเบิกโอนล็อต green (คลังกลาง ↔ Store) — trigger ย้าย kg ระหว่างสองช่องของล็อต
+const GreenTransfers = {
+  insert: (db, transferNo, t) =>
+    db.query(
+      `INSERT INTO green_lot_transfers (transfer_no, lot_id, direction, qty_kg, transferred_date, note, staff_id)
+       VALUES ($1, $2, COALESCE($3, 'to_store'), $4, COALESCE($5, CURRENT_DATE), $6, $7)
+       RETURNING *`,
+      [transferNo, t.lot_id, t.direction ?? null, t.qty_kg, t.transferred_date ?? null, t.note ?? null, t.staff_id ?? null]
+    ),
+
+  list: (db = pool) =>
+    db.query(
+      `SELECT t.*, g.code AS lot_code, g.origin
+         FROM green_lot_transfers t
+         JOIN green_coffee_lots g USING (lot_id)
+        ORDER BY t.created_at DESC`
+    ),
 };
 
 const Roasting = {
@@ -111,11 +150,21 @@ const Roasting = {
     db.query(
       `INSERT INTO roast_batches
            (code, lot_id, roast_date, roast_level, green_weight_in, roasted_weight_out,
-            operator, machine, note)
-       VALUES ($1, $2, COALESCE($3, CURRENT_DATE), COALESCE($4, 'medium'), $5, $6, $7, $8, $9)
+            operator, machine, note, work_order_id)
+       VALUES ($1, $2, COALESCE($3, CURRENT_DATE), COALESCE($4, 'medium'), $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [code, r.lot_id, r.roast_date ?? null, r.roast_level ?? null,
-       r.green_weight_in, r.roasted_weight_out, r.operator ?? null, r.machine ?? null, r.note ?? null]
+       r.green_weight_in, r.roasted_weight_out, r.operator ?? null, r.machine ?? null,
+       r.note ?? null, r.work_order_id ?? null]
+    ),
+
+  // ลดกาแฟคั่วคงเหลือของล็อตคั่ว (ส่วนที่ถูกบรรจุเป็นถุงในงานเดียวกัน)
+  reduceRoasted: (db, batchId, kg) =>
+    db.query(
+      `UPDATE roast_batches
+          SET remaining_roasted_kg = GREATEST(0, remaining_roasted_kg - $2)
+        WHERE batch_id = $1 RETURNING *`,
+      [batchId, kg]
     ),
 
   delete: (db, id) => db.query('DELETE FROM roast_batches WHERE batch_id = $1 RETURNING batch_id', [id]),
@@ -213,4 +262,4 @@ const SalesOrders = {
   delete: (db, id) => db.query('DELETE FROM sales_orders WHERE order_id = $1 RETURNING order_id', [id]),
 };
 
-module.exports = { nextCode, Suppliers, GreenLots, Roasting, Packaging, SalesOrders };
+module.exports = { nextCode, Suppliers, GreenLots, GreenTransfers, Roasting, Packaging, SalesOrders };

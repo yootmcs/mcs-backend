@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.post('/', wo.create);
 router.get('/', wo.list);
+router.get('/finished-lots', wo.finishedLots); // ต้องมาก่อน /:id
 router.get('/:id', wo.getById);
 router.post('/:id/start', wo.start);
 router.post('/:id/complete', wo.complete);
