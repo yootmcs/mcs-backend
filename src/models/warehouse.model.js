@@ -20,10 +20,11 @@ const Materials = {
 const Receipts = {
   insert: (db, r) =>
     db.query(
-      `INSERT INTO warehouse_receipts (receipt_no, supplier_name, received_date, note, staff_id)
-       VALUES ($1, $2, COALESCE($3, CURRENT_DATE), $4, $5)
+      // supplier_id = อ้างทะเบียนซัพกลาง (เฟส 1); supplier_name เก็บเป็น snapshot ชื่อ ณ ตอนรับ
+      `INSERT INTO warehouse_receipts (receipt_no, supplier_id, supplier_name, received_date, note, staff_id)
+       VALUES ($1, $2, $3, COALESCE($4, CURRENT_DATE), $5, $6)
        RETURNING *`,
-      [r.receipt_no, r.supplier_name ?? null, r.received_date ?? null, r.note ?? null, r.staff_id ?? null]
+      [r.receipt_no, r.supplier_id ?? null, r.supplier_name ?? null, r.received_date ?? null, r.note ?? null, r.staff_id ?? null]
     ),
 
   insertItem: (db, receiptId, it) =>
@@ -35,11 +36,25 @@ const Receipts = {
       [receiptId, it.material_id, it.lot_number ?? null, it.mfd_date ?? null, it.exp_date ?? null, it.qty_received ?? null, it.unit_cost ?? null]
     ),
 
+  // supplier_display = ชื่อจากทะเบียนซัพ ถ้ามี ไม่งั้น fallback ชื่อ snapshot ที่พิมพ์ไว้
   list: (db = pool) =>
-    db.query('SELECT * FROM warehouse_receipts ORDER BY created_at DESC'),
+    db.query(
+      `SELECT r.*, sup.code AS supplier_code,
+              COALESCE(sup.name, r.supplier_name) AS supplier_display
+         FROM warehouse_receipts r
+         LEFT JOIN suppliers sup USING (supplier_id)
+        ORDER BY r.created_at DESC`
+    ),
 
   getById: (db = pool, id) =>
-    db.query('SELECT * FROM warehouse_receipts WHERE receipt_id = $1', [id]),
+    db.query(
+      `SELECT r.*, sup.code AS supplier_code,
+              COALESCE(sup.name, r.supplier_name) AS supplier_display
+         FROM warehouse_receipts r
+         LEFT JOIN suppliers sup USING (supplier_id)
+        WHERE r.receipt_id = $1`,
+      [id]
+    ),
 
   itemsByReceipt: (db = pool, id) =>
     db.query(
