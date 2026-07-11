@@ -9,7 +9,9 @@
     "db:test": "node src/scripts/testConnection.js",
     "rfid:sim": "node src/scripts/rfid_simulator.js",
     "demo:e2e": "node src/scripts/e2e_demo.js",
-    "demo:mfg": "node src/scripts/manufacturing_e2e.js"
+    "demo:mfg": "node src/scripts/manufacturing_e2e.js",
+    "db:backup": "node src/scripts/dbBackup.js",
+    "db:restore": "node src/scripts/dbRestore.js"
   },
   "keywords": [
     "mcs",
