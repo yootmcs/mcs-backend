@@ -134,7 +134,7 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 ```
 mcs-backend/
 ├── server.js                 # Entry point + graceful shutdown
-├── package.json              # scripts: start / dev / db:test / rfid:sim / demo:e2e
+├── package.json              # scripts: start / dev / db:test / rfid:sim / demo:e2e / demo:mfg
 ├── .env / .env.example       # config (.env อยู่ใน .gitignore)
 ├── README.md · SETUP_LOG.md · PROGRESS.md
 └── src/
@@ -157,7 +157,7 @@ mcs-backend/
         ├── 007_create_bom_schema.sql            🆕
         ├── 008_add_bom_output_material.sql      🆕
         ├── runSql.js · testConnection.js
-        ├── rfid_simulator.js · e2e_demo.js
+        ├── rfid_simulator.js · e2e_demo.js · manufacturing_e2e.js 🆕
 ```
 
 ---
@@ -184,7 +184,7 @@ mcs-backend/
 ลงทะเบียน Tag → รับเข้าคลัง → Packing Session → verify → Stock หัก + Tag=sold → shipped
 ```
 
-**B) Manufacturing** 🆕
+**B) Manufacturing** 🆕 (ทดสอบด้วย `npm run demo:mfg` — assert 8 ขั้น ผ่านครบ ✅)
 ```
 สร้าง BOM (สูตร)                           POST /api/bom
       ↓
@@ -211,6 +211,7 @@ npm start          # production
 npm run db:test    # ทดสอบการเชื่อมต่อ DB
 npm run rfid:sim   # รันตัวจำลอง RFID (ต้องเปิดเซิร์ฟเวอร์ก่อน)
 npm run demo:e2e   # ทดสอบ flow ครบวงจร (RFID/Packing)
+npm run demo:mfg   # ทดสอบ flow สาย manufacturing (BOM คั่ว→บรรจุ, assert 8 ขั้น)
 ```
 
 รัน migration ทั้งหมด (จากโฟลเดอร์ `mcs-backend`):
@@ -224,13 +225,13 @@ foreach ($f in '001_create_rfid_schema','002_seed_data','003_add_packing_expecte
 
 ## 🎯 ขั้นถัดไปที่แนะนำ (ยังไม่ได้ทำ)
 
-1. **E2E test สำหรับสาย manufacturing** — สคริปต์ assert flow BOM→order→start→complete (แบบเดียวกับ `demo:e2e`)
-2. **ยกเลิกใบสั่งผลิต** — `POST /production/orders/:id/cancel` (คืน `qty_reserved` ที่จองไว้)
-3. **CRUD ที่เหลือ** — `PUT/DELETE /products`, แก้ไข/ยกเลิก receipt/issue, endpoint `stock_transactions`
-4. **API docs / test** — ไฟล์ `.http` หรือ Swagger, unit/integration test
-5. **CI/CD** — GitHub Actions รัน lint/test อัตโนมัติ
+1. **ยกเลิกใบสั่งผลิต** — `POST /production/orders/:id/cancel` (คืน `qty_reserved` ที่จองไว้)
+2. **CRUD ที่เหลือ** — `PUT/DELETE /products`, แก้ไข/ยกเลิก receipt/issue, endpoint `stock_transactions`
+3. **API docs / test** — ไฟล์ `.http` หรือ Swagger, unit/integration test
+4. **CI/CD** — GitHub Actions รัน lint/test อัตโนมัติ
 
 ### ✅ ทำเสร็จแล้ว (จากรายการเดิม)
+- ~~**E2E test สาย manufacturing**~~ → 🆕 `npm run demo:mfg` (`manufacturing_e2e.js`) เดิน flow เต็มผ่าน HTTP API + assert ครบ **8 ขั้น** (รับวัตถุดิบ → เปิดใบสั่งคั่ว/จอง → เริ่ม/ตัดจริง → คั่วเสร็จ/เมล็ดคั่วเข้า Store → เปิดใบสั่งบรรจุ/จอง → เริ่ม/ตัดจริง → บรรจุเสร็จ/สินค้าเข้า `stock_levels`) + cleanup อัตโนมัติ → **ผ่านครบทุกขั้น ✅** (รัน 2026-07-11)
 - ~~Packing flow~~ → verify → pack → ship แล้ว
 - ~~`qty_reserved` logic~~ → 🆕 production order จอง/ปล่อยวัตถุดิบแล้ว
 - ~~ทำให้การสแกนมีผลจริง~~ · ~~API สินค้า/สต็อก~~ · ~~git init + push~~
@@ -241,5 +242,3 @@ foreach ($f in '001_create_rfid_schema','002_seed_data','003_add_packing_expecte
 - **รหัสผ่าน DB** เก็บใน `.env` (อยู่ใน `.gitignore` — ไม่ถูก commit)
 - **SQL ที่มีภาษาไทย ต้องรันผ่าน `node src/scripts/runSql.js <file>`** ห้ามใช้ `Get-Content | psql` (PowerShell pipe แปลงไทยเป็น `?` ก่อนถึง Postgres → ข้อมูลเสียถาวร)
 - ภาษาไทยใน Windows console อาจแสดงเป็น `???` — พิมพ์ `chcp 65001` ก่อน หรือดูจาก API response (เป็น UTF-8 ถูกต้อง)
-</content>
-</invoke>
