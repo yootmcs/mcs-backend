@@ -127,6 +127,23 @@ Backend API สำหรับระบบ CRM + คลังสินค้า 
 
 > **หมายเหตุ:** โมดูลนี้เป็นตัวเชื่อม `qty_reserved` (การจอง) ที่เดิม PROGRESS ระบุว่ายังไม่ทำ — ตอนนี้ทำแล้วผ่าน production order
 
+### 🆕 13. Store โรงคั่ว + ใบเบิกโอน (2 คลังแยกยอด)
+**ไฟล์:** ต่อในชุด `warehouse.*`; migration `010_create_store_transfers.sql`
+
+- **คลังกลาง** (`warehouse_stock`, เดิม) = ที่รับของเข้า · **Store โรงคั่ว** (`store_stock`, ใหม่) = ที่ไลน์ผลิตเบิกไปใช้
+- `stock_transfers` + `_items` = ใบเบิกโอน · **Trigger** `apply_stock_transfer`: ต้นทางลด (lock + กันติดลบ) / ปลายทางเพิ่ม อัตโนมัติ รองรับ 2 ทิศ (central↔store)
+- **Endpoints:** `POST/GET /api/warehouse/transfers` · `GET /api/warehouse/transfers/:id` · `GET /api/warehouse/store-stock`
+- ทดสอบ (รับ 20 → โอน 12 → กันโอนเกิน → เบิกคืน): ✅ 11/11
+
+### 🆕 14. Work Orders — ใบสั่งงานรวม (คั่ว + บรรจุ)
+**ไฟล์:** `workorder.controller.js` + `workorder.service.js` + `workorder.model.js`; migration `011_create_work_orders.sql`
+
+- ใบสั่งงาน 1 ใบ อ้าง **2 BOM** (คั่ว+บรรจุ) เบิกวัตถุดิบทั้งหมด (เมล็ด+ถุง/ฟอล์ย) จาก **Store** ทีเดียว
+- เมล็ดคั่ว = **ของกลางในงาน** (ไหลจากคั่ว→บรรจุ ไม่เก็บเป็นสต็อก) · บันทึกได้/เสีย **2 จุด**
+- Flow: `POST /api/work-orders` (จองที่ Store) → `.../start` (ตัดจริง+ปล่อยจอง) → `.../complete` (ได้/เสีย 2 จุด → ถุงเข้า `stock_levels`) → `.../cancel` (คืนของ)
+- guard: Store ไม่พอ → 400 shortage · เมล็ดคั่วที่ได้ไม่พอบรรจุ → 400
+- ทดสอบ e2e (`npm run demo:mfg`) + smoke ตรง service: ✅ ผ่านครบ
+
 ---
 
 ## 📁 โครงสร้างไฟล์ปัจจุบัน
@@ -156,6 +173,9 @@ mcs-backend/
         ├── 006_seed_raw_materials.sql           🆕
         ├── 007_create_bom_schema.sql            🆕
         ├── 008_add_bom_output_material.sql      🆕
+        ├── 009_create_roastery_schema.sql       🆕
+        ├── 010_create_store_transfers.sql       🆕
+        ├── 011_create_work_orders.sql           🆕
         ├── runSql.js · testConnection.js
         ├── rfid_simulator.js · e2e_demo.js · manufacturing_e2e.js 🆕
 ```
@@ -172,8 +192,10 @@ mcs-backend/
 | **Stock** | `GET /api/stock` |
 | **Packing** | `POST /api/packing/{start,verify,ship}` · `GET /api/packing/:packing_id` |
 | **Warehouse** 🆕 | `GET/POST /api/warehouse/materials` · `.../receipts` · `.../issues` · `GET /api/warehouse/stock` |
+| **Transfers/Store** 🆕 | `POST/GET /api/warehouse/transfers` · `GET /api/warehouse/transfers/:id` · `GET /api/warehouse/store-stock` |
 | **BOM** 🆕 | `GET/POST /api/bom` · `GET /api/bom/:id` |
 | **Production** 🆕 | `GET/POST /api/production/orders` · `GET /api/production/orders/:id` · `POST .../:id/start` · `POST .../:id/complete` |
+| **Work Orders** 🆕 (คั่ว+บรรจุ) | `GET/POST /api/work-orders` · `GET /api/work-orders/:id` · `POST .../:id/{start,complete,cancel}` |
 
 ---
 
@@ -184,21 +206,26 @@ mcs-backend/
 ลงทะเบียน Tag → รับเข้าคลัง → Packing Session → verify → Stock หัก + Tag=sold → shipped
 ```
 
-**B) Manufacturing** 🆕 (ทดสอบด้วย `npm run demo:mfg` — assert 8 ขั้น ผ่านครบ ✅)
+**B) Manufacturing (สาย 2 คลัง + ใบสั่งงานรวม)** 🆕 (ทดสอบด้วย `npm run demo:mfg` — ผ่านครบ ✅)
 ```
-สร้าง BOM (สูตร)                           POST /api/bom
+สร้าง BOM คั่ว/บรรจุ                         POST /api/bom
       ↓
-รับวัตถุดิบเข้าคลัง                          POST /api/warehouse/receipts
+รับวัตถุดิบเข้าคลังกลาง                       POST /api/warehouse/receipts
       ↓
-เปิดใบสั่งผลิต → เช็ค+จองวัตถุดิบ            POST /api/production/orders
+เบิกโอน คลังกลาง → Store โรงคั่ว             POST /api/warehouse/transfers
       ↓
-เริ่มผลิต → ตัดวัตถุดิบจริง (issue)          POST /api/production/orders/:id/start
+เปิดใบสั่งงานรวม (คั่ว+บรรจุ) → จองที่ Store   POST /api/work-orders
       ↓
-จบผลิต → บันทึกผลผลิต                       POST /api/production/orders/:id/complete
+เริ่มงาน → ตัดวัตถุดิบจริงจาก Store           POST /api/work-orders/:id/start
       ↓
-roasting → เมล็ดคั่วเข้า warehouse_stock
-packaging → สินค้าสำเร็จรูปเข้า stock_levels
+จบงาน → บันทึกได้/เสีย 2 จุด (คั่ว, บรรจุ)     POST /api/work-orders/:id/complete
+      ↓
+เมล็ดคั่ว = ของกลางในงาน (ไหลเข้าบรรจุเลย)
+ถุงสำเร็จ → เข้า stock_levels
 ```
+
+> โมดูล `/production` เดิม (ใบสั่งผลิตทีละ BOM, ตัดจากคลังกลาง) ยังคงอยู่ใช้งานได้
+> flow ใหม่ข้างบนคือแนวทางที่ใช้จริง (Store แยก + ใบสั่งงานรวมคั่ว+บรรจุ)
 
 ---
 
@@ -216,7 +243,7 @@ npm run demo:mfg   # ทดสอบ flow สาย manufacturing (BOM คั่
 
 รัน migration ทั้งหมด (จากโฟลเดอร์ `mcs-backend`):
 ```powershell
-foreach ($f in '001_create_rfid_schema','002_seed_data','003_add_packing_expected','004_fix_thai_names','005_create_warehouse_schema','006_seed_raw_materials','007_create_bom_schema','008_add_bom_output_material') {
+foreach ($f in '001_create_rfid_schema','002_seed_data','003_add_packing_expected','004_fix_thai_names','005_create_warehouse_schema','006_seed_raw_materials','007_create_bom_schema','008_add_bom_output_material','009_create_roastery_schema','010_create_store_transfers','011_create_work_orders') {
   node src/scripts/runSql.js "src/scripts/$f.sql"
 }
 ```

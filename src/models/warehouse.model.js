@@ -157,4 +157,33 @@ const Transfers = {
     ),
 };
 
-module.exports = { Materials, Receipts, Issues, Stock, Transfers };
+// store_stock helpers สำหรับไลน์ผลิตเบิกจาก Store (จอง/ตัด)
+const StoreStock = {
+  forMaterials: (db, materialIds) =>
+    db.query(
+      `SELECT s.material_id, m.code, m.name, m.unit, s.qty_available, s.qty_reserved
+         FROM store_stock s
+         JOIN raw_materials m USING (material_id)
+        WHERE s.material_id = ANY($1)`,
+      [materialIds]
+    ),
+
+  addReserved: (db, materialId, delta) =>
+    db.query(
+      `UPDATE store_stock SET qty_reserved = qty_reserved + $2, updated_at = now()
+        WHERE material_id = $1 RETURNING *`,
+      [materialId, delta]
+    ),
+
+  // ตัดจริงจาก Store (atomic + กันติดลบด้วย WHERE) — คืน 0 แถวถ้าของไม่พอ
+  consume: (db, materialId, qty) =>
+    db.query(
+      `UPDATE store_stock
+          SET qty_total = qty_total - $2, qty_available = qty_available - $2, updated_at = now()
+        WHERE material_id = $1 AND qty_available >= $2
+        RETURNING *`,
+      [materialId, qty]
+    ),
+};
+
+module.exports = { Materials, Receipts, Issues, Stock, Transfers, StoreStock };

@@ -9,6 +9,7 @@ const warehouseRoutes = require('./warehouse.routes');
 const bomRoutes = require('./bom.routes');
 const productionRoutes = require('./production.routes');
 const roasteryRoutes = require('./roastery.routes');
+const workOrderRoutes = require('./workorder.routes');
 
 const router = express.Router();
 
@@ -20,6 +21,7 @@ router.use('/packing', packingRoutes);
 router.use('/warehouse', warehouseRoutes);
 router.use('/bom', bomRoutes);
 router.use('/production', productionRoutes);
+router.use('/work-orders', workOrderRoutes);
 
 // โมดูลโรงคั่ว (roastery) — กำหนด path เต็มเองในไฟล์ (suppliers, green-lots, ฯลฯ)
 router.use('/', roasteryRoutes);
