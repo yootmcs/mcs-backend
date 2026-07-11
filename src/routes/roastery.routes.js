@@ -36,6 +36,10 @@ router.post('/packaging', c.createPackaging);
 router.patch('/packaging/:id', c.updatePackaging);
 router.delete('/packaging/:id', c.deletePackaging);
 
+// ขายถุงสำเร็จ (finished goods, FEFO) — ต้องมาก่อน /sales-orders/:id
+router.post('/finished-sales', c.createFinishedSale);
+router.get('/finished-sales/:id', c.getFinishedSale);
+
 // คำสั่งซื้อ / ส่งออก
 router.get('/sales-orders', c.listSalesOrders);
 router.post('/sales-orders', c.createSalesOrder);

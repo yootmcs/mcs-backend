@@ -187,11 +187,88 @@ exports.setSalesOrderStatus = async (id, status) => {
   return row;
 };
 
-// ลบคำสั่งซื้อ → allocations ถูกลบแบบ CASCADE → trigger คืนกาแฟคั่วเข้าล็อต
+const round3 = (n) => Math.round(n * 1000) / 1000;
+
+// ขายถุงสำเร็จ (finished goods) แบบ FEFO: ตัดจากล็อตที่คั่วก่อน-ออกก่อน
+//   จัดสรรถุงข้ามหลายล็อตได้ + หัก stock_levels รวม (trigger stock_transactions)
+exports.createFinishedSale = async (payload) => {
+  const { product_id, qty_bags } = payload;
+  if (!product_id) throw httpErr(400, 'product_id is required (เลือกสินค้าที่จะขาย)');
+  const need0 = round3(Number(qty_bags));
+  if (!(need0 > 0)) throw httpErr(400, 'qty_bags must be > 0');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const code = payload.code || (await nextCode(client, 'sales_orders', 'SO'));
+    const order = (await SalesOrders.insertOrder(client, code, payload)).rows[0];
+
+    // FEFO: ไล่ตัดจากล็อตสำเร็จที่คั่วก่อนสุด จนครบจำนวนถุง
+    const lots = (await SalesOrders.fefoFinishedLots(client, product_id)).rows;
+    const totalAvail = lots.reduce((s, l) => s + Number(l.qty_remaining), 0);
+    if (round3(totalAvail) < need0) {
+      throw httpErr(400, `ถุงสำเร็จไม่พอ: มี ${round3(totalAvail)} ถุง แต่สั่ง ${need0} ถุง`, { available: round3(totalAvail), requested: need0 });
+    }
+
+    let need = need0;
+    const allocations = [];
+    for (const lot of lots) {
+      if (need <= 0) break;
+      const take = round3(Math.min(need, Number(lot.qty_remaining)));
+      allocations.push((await SalesOrders.insertFinishedAllocation(client, order.order_id, lot.finished_lot_id, take)).rows[0]);
+      need = round3(need - take);
+    }
+
+    // หัก stock_levels รวม (ผ่าน stock_transactions 'sell', qty ติดลบ)
+    await client.query(
+      `INSERT INTO stock_transactions (product_id, txn_type, qty_change, note, staff_id)
+       VALUES ($1, 'sell', $2, $3, $4)`,
+      [product_id, -need0, `ขายถุงสำเร็จ ${order.code}`, payload.staff_id ?? null]
+    );
+
+    await client.query('COMMIT');
+    return { ...order, allocations };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+// ดูออเดอร์ขายถุงสำเร็จ + ล็อตที่จัดสรร (ตามรอยถึงล็อตคั่ว/green)
+exports.getFinishedSale = async (id) => {
+  const order = (await SalesOrders.getById(pool, id)).rows[0];
+  if (!order) return null;
+  const allocations = (await SalesOrders.finishedAllocations(pool, id)).rows;
+  return { ...order, allocations };
+};
+
+// ลบคำสั่งซื้อ → allocations ถูกลบแบบ CASCADE → trigger คืนของเข้าล็อต
+// (ถุงสำเร็จ: คืน finished_lots.qty_remaining + คืน stock_levels ด้วย stock_transaction ย้อน)
 exports.deleteSalesOrder = async (id) => {
-  const row = (await SalesOrders.delete(pool, id)).rows[0];
-  if (!row) throw httpErr(404, 'sales order not found');
-  return row;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const order = (await SalesOrders.getById(client, id)).rows[0];
+    if (!order) throw httpErr(404, 'sales order not found');
+    // ออเดอร์ขายถุง → คืนสต็อกสินค้าสำเร็จรูปที่หักไปตอนขาย
+    if (order.product_id && order.qty_bags) {
+      await client.query(
+        `INSERT INTO stock_transactions (product_id, txn_type, qty_change, note)
+         VALUES ($1, 'return', $2, $3)`,
+        [order.product_id, round3(Number(order.qty_bags)), `ยกเลิกออเดอร์ ${order.code} — คืนสต็อก`]
+      );
+    }
+    const row = (await SalesOrders.delete(client, id)).rows[0]; // CASCADE + trigger คืน qty_remaining
+    await client.query('COMMIT');
+    return row;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
 // ---- Dashboard summary (แดชบอร์ดภาพรวม) ----

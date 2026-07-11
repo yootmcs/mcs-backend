@@ -217,12 +217,21 @@ const SalesOrders = {
     db.query(
       `SELECT o.*,
               COALESCE(a.total_kg, 0) AS total_kg,
-              (COALESCE(a.total_kg, 0) * o.unit_price) AS total_value
+              COALESCE(fa.total_bags, 0) AS allocated_bags,
+              p.sku AS product_sku, p.name AS product_name,
+              CASE WHEN o.product_id IS NOT NULL
+                   THEN COALESCE(fa.total_bags, 0) * o.unit_price
+                   ELSE COALESCE(a.total_kg, 0) * o.unit_price END AS total_value
          FROM sales_orders o
+         LEFT JOIN products p ON p.product_id = o.product_id
          LEFT JOIN (
            SELECT order_id, SUM(qty_kg) AS total_kg
              FROM sales_order_allocations GROUP BY order_id
          ) a USING (order_id)
+         LEFT JOIN (
+           SELECT order_id, SUM(qty_bags) AS total_bags
+             FROM finished_allocations GROUP BY order_id
+         ) fa USING (order_id)
         ORDER BY o.order_date DESC, o.code DESC`
     ),
 
@@ -232,11 +241,12 @@ const SalesOrders = {
   insertOrder: (db, code, o) =>
     db.query(
       `INSERT INTO sales_orders
-           (code, order_date, customer, destination, currency, unit_price, status, note)
-       VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, COALESCE($5, 'THB'), $6, COALESCE($7, 'pending'), $8)
+           (code, order_date, customer, destination, currency, unit_price, status, note, product_id, qty_bags)
+       VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4, COALESCE($5, 'THB'), $6, COALESCE($7, 'pending'), $8, $9, $10)
        RETURNING *`,
       [code, o.order_date ?? null, o.customer, o.destination ?? null,
-       o.currency ?? null, o.unit_price ?? 0, o.status ?? null, o.note ?? null]
+       o.currency ?? null, o.unit_price ?? 0, o.status ?? null, o.note ?? null,
+       o.product_id ?? null, o.qty_bags ?? null]
     ),
 
   insertAllocation: (db, orderId, a) =>
@@ -244,6 +254,40 @@ const SalesOrders = {
       `INSERT INTO sales_order_allocations (order_id, batch_id, qty_kg)
        VALUES ($1, $2, $3) RETURNING *`,
       [orderId, a.batch_id, a.qty_kg]
+    ),
+
+  // ---- ขายถุงสำเร็จ (finished goods) แบบ FEFO ----
+  // จัดสรรถุงจากล็อตสำเร็จให้ออเดอร์ (trigger หัก qty_remaining + กันติดลบ)
+  insertFinishedAllocation: (db, orderId, finishedLotId, qtyBags) =>
+    db.query(
+      `INSERT INTO finished_allocations (order_id, finished_lot_id, qty_bags)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [orderId, finishedLotId, qtyBags]
+    ),
+
+  // ล็อตถุงสำเร็จของสินค้าหนึ่ง ที่ยังมีเหลือ เรียง FEFO (คั่วก่อน-ออกก่อน) + lock
+  fefoFinishedLots: (db, productId) =>
+    db.query(
+      `SELECT finished_lot_id, code, roast_date, qty_remaining
+         FROM finished_lots
+        WHERE product_id = $1 AND qty_remaining > 0
+        ORDER BY roast_date ASC NULLS LAST, produced_at ASC
+        FOR UPDATE`,
+      [productId]
+    ),
+
+  // จัดสรรถุงของออเดอร์ + ล็อตที่ใช้ (ไว้แสดง/ตามรอย)
+  finishedAllocations: (db = pool, orderId) =>
+    db.query(
+      `SELECT fa.*, fl.code AS finished_lot_code, fl.roast_date,
+              rb.code AS batch_code, g.code AS green_lot_code, g.origin AS green_origin
+         FROM finished_allocations fa
+         JOIN finished_lots fl ON fl.finished_lot_id = fa.finished_lot_id
+         LEFT JOIN roast_batches rb ON rb.batch_id = fl.batch_id
+         LEFT JOIN green_coffee_lots g ON g.lot_id = rb.lot_id
+        WHERE fa.order_id = $1
+        ORDER BY fa.created_at`,
+      [orderId]
     ),
 
   allocations: (db = pool, orderId) =>

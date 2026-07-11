@@ -59,7 +59,7 @@ async function main() {
     receipt: `T${ts}-RCPT`, transfer: `T${ts}-TRF`, work: `T${ts}-WO`,
   };
   const id = { materials: [], productId: null, bomR: null, bomP: null,
-    receiptId: null, transferId: null, workId: null, supplierId: null, lotId: null };
+    receiptId: null, transferId: null, workId: null, supplierId: null, lotId: null, saleId: null };
 
   console.log('🏭 E2E — สายการผลิตตามรอยรายล็อต (green ล็อต → คั่ว → ถุงสำเร็จ)');
   console.log(`   prefix = T${ts}`);
@@ -174,7 +174,27 @@ async function main() {
     assert(row.supplier_name && row.supplier_name.includes('ดอยช้าง'), `สาวถึงซัพพลายเออร์: ${row?.supplier_name}`);
     assert(row.batch_code && row.batch_code.startsWith('RB-'), `สาวถึงล็อตคั่ว: ${row?.batch_code}`);
 
-    console.log('\n✅ E2E ตามรอยรายล็อตเต็มสูบ สำเร็จครบทุกขั้น (green ล็อต → คั่ว → ถุงสำเร็จ → สาวรอยกลับได้)');
+    // -----------------------------------------------------------------
+    step(8, 'ขายถุงสำเร็จ 10 ถุง (FEFO) → ตัดล็อต + สต็อก + รู้ว่าส่งจากล็อตคั่วไหน');
+    // -----------------------------------------------------------------
+    const sale = await api('POST', '/finished-sales', {
+      customer: 'ทดสอบ ลูกค้า คาเฟ่โตเกียว', product_id: id.productId, qty_bags: 10, unit_price: 250, currency: 'THB',
+    });
+    id.saleId = sale.data.order_id;
+    assert(sale.data.code.startsWith('SO-'), `สร้างออเดอร์ขาย ${sale.data.code}`);
+    assert(sale.data.allocations.length >= 1 && near(sale.data.allocations[0].qty_bags, 10), 'จัดสรร FEFO 10 ถุงจากล็อตสำเร็จ');
+
+    const fl2 = await api('GET', `/work-orders/finished-lots?product_id=${id.productId}`);
+    assert(near(fl2.data[0].qty_remaining, 5), `ล็อตถุงเหลือ 5 (15−10) = ${fl2.data[0].qty_remaining}`);
+    const stock2 = await api('GET', '/stock');
+    const ps2 = stock2.data.find((r) => r.sku === CODE.prodSku);
+    assert(near(ps2.qty_available, 5), `สต็อกสินค้าเหลือ 5 (15−10) = ${ps2.qty_available}`);
+
+    const saleDetail = await api('GET', `/finished-sales/${id.saleId}`);
+    assert(saleDetail.data.allocations[0].green_lot_code === lot.data.code,
+      `ออเดอร์รู้ว่าส่งถุงจากล็อต green ${saleDetail.data.allocations[0].green_lot_code}`);
+
+    console.log('\n✅ E2E ตามรอยรายล็อตเต็มสูบ + ขายถุงสำเร็จ FEFO สำเร็จครบทุกขั้น');
   } catch (err) {
     console.error(`\n❌ E2E สายการผลิต ล้มเหลว: ${err.message}`);
     process.exitCode = 1;
@@ -188,6 +208,7 @@ async function main() {
 // ลบข้อมูลทดสอบทั้งหมด เรียงตาม FK (ลูกก่อนแม่; แก้ FK วนระหว่าง work_orders ↔ roast_batches)
 async function cleanup(id) {
   try {
+    if (id.saleId) await pool.query('DELETE FROM sales_orders WHERE order_id = $1', [id.saleId]); // CASCADE finished_allocations + คืนล็อต
     if (id.workId) {
       await pool.query('DELETE FROM finished_lots WHERE work_id = $1', [id.workId]);
       await pool.query('UPDATE work_orders SET batch_id = NULL WHERE work_id = $1', [id.workId]);

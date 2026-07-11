@@ -219,6 +219,28 @@ exports.createSalesOrder = async (req, res, next) => {
   } catch (err) { handleDbError(err, res, next); }
 };
 
+// ---- ขายถุงสำเร็จ (finished goods) แบบ FEFO ----
+exports.createFinishedSale = async (req, res, next) => {
+  try {
+    const { customer, product_id, qty_bags, currency, status } = req.body;
+    if (!customer) return bad(res, 'customer is required');
+    if (!product_id) return bad(res, 'product_id is required (เลือกสินค้าที่จะขาย)');
+    if (qty_bags == null || Number(qty_bags) <= 0) return bad(res, 'qty_bags must be > 0');
+    if (currency && !CURRENCIES.includes(currency)) return bad(res, `currency must be one of: ${CURRENCIES.join(', ')}`);
+    if (status && !ORDER_STATUS.includes(status)) return bad(res, `status must be one of: ${ORDER_STATUS.join(', ')}`);
+    const data = await service.createFinishedSale(req.body);
+    res.status(201).json({ status: 'ok', data });
+  } catch (err) { handleDbError(err, res, next); }
+};
+
+exports.getFinishedSale = async (req, res, next) => {
+  try {
+    const data = await service.getFinishedSale(req.params.id);
+    if (!data) return res.status(404).json({ status: 'error', message: 'sales order not found' });
+    res.json({ status: 'ok', data });
+  } catch (err) { handleDbError(err, res, next); }
+};
+
 exports.setSalesOrderStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
