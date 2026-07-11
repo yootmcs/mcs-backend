@@ -20,5 +20,11 @@ router.get('/issues/:id', wh.getIssue);
 
 // Stock
 router.get('/stock', wh.listStock);
+router.get('/store-stock', wh.listStoreStock);
+
+// Transfers (ใบเบิกโอน คลังกลาง ↔ Store)
+router.post('/transfers', wh.createTransfer);
+router.get('/transfers', wh.listTransfers);
+router.get('/transfers/:id', wh.getTransfer);
 
 module.exports = router;

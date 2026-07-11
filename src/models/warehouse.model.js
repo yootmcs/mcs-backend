@@ -106,6 +106,55 @@ const Stock = {
         WHERE m.is_active = true
         ORDER BY m.code`
     ),
+
+  // ยอดคงเหลือที่ Store โรงคั่ว (คลังที่ 2)
+  listStore: (db = pool) =>
+    db.query(
+      `SELECT m.material_id, m.code, m.name, m.category, m.unit, m.qty_min_alert,
+              COALESCE(s.qty_total, 0)     AS qty_total,
+              COALESCE(s.qty_available, 0) AS qty_available,
+              COALESCE(s.qty_reserved, 0)  AS qty_reserved,
+              (COALESCE(s.qty_available, 0) < m.qty_min_alert) AS low_stock,
+              s.updated_at
+         FROM raw_materials m
+         JOIN store_stock s USING (material_id)
+        WHERE m.is_active = true
+        ORDER BY m.code`
+    ),
 };
 
-module.exports = { Materials, Receipts, Issues, Stock };
+// ใบเบิกโอน (คลังกลาง ↔ Store) — trigger ปรับยอดทั้งสองคลังให้เอง
+const Transfers = {
+  insert: (db, t) =>
+    db.query(
+      `INSERT INTO stock_transfers (transfer_no, from_location, to_location, transferred_date, note, staff_id)
+       VALUES ($1, COALESCE($2, 'central'), COALESCE($3, 'store'), COALESCE($4, CURRENT_DATE), $5, $6)
+       RETURNING *`,
+      [t.transfer_no, t.from_location ?? null, t.to_location ?? null, t.transferred_date ?? null, t.note ?? null, t.staff_id ?? null]
+    ),
+
+  insertItem: (db, transferId, it) =>
+    db.query(
+      `INSERT INTO stock_transfer_items (transfer_id, material_id, qty, note)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [transferId, it.material_id, it.qty, it.note ?? null]
+    ),
+
+  list: (db = pool) =>
+    db.query('SELECT * FROM stock_transfers ORDER BY created_at DESC'),
+
+  getById: (db = pool, id) =>
+    db.query('SELECT * FROM stock_transfers WHERE transfer_id = $1', [id]),
+
+  itemsByTransfer: (db = pool, id) =>
+    db.query(
+      `SELECT ti.*, m.code, m.name AS material_name, m.unit
+         FROM stock_transfer_items ti
+         JOIN raw_materials m USING (material_id)
+        WHERE ti.transfer_id = $1
+        ORDER BY ti.created_at`,
+      [id]
+    ),
+};
+
+module.exports = { Materials, Receipts, Issues, Stock, Transfers };

@@ -1,6 +1,6 @@
-// Business logic layer — ครอบ transaction สำหรับใบรับ/ใบจ่าย
+// Business logic layer — ครอบ transaction สำหรับใบรับ/ใบจ่าย/ใบเบิกโอน
 const { pool } = require('../config/db');
-const { Materials, Receipts, Issues, Stock } = require('../models/warehouse.model');
+const { Materials, Receipts, Issues, Stock, Transfers } = require('../models/warehouse.model');
 
 exports.listMaterials = async (category) => (await Materials.list(pool, category)).rows;
 
@@ -65,3 +65,34 @@ exports.getIssue = async (id) => {
 };
 
 exports.listStock = async () => (await Stock.list()).rows;
+
+exports.listStoreStock = async () => (await Stock.listStore()).rows;
+
+// สร้างใบเบิกโอน + รายการ (atomic) — trigger ย้ายของระหว่างคลังและ throw ถ้าไม่พอ
+exports.createTransfer = async (payload) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const transfer = (await Transfers.insert(client, payload)).rows[0];
+    const items = [];
+    for (const it of payload.items) {
+      items.push((await Transfers.insertItem(client, transfer.transfer_id, it)).rows[0]);
+    }
+    await client.query('COMMIT');
+    return { ...transfer, items };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+exports.listTransfers = async () => (await Transfers.list()).rows;
+
+exports.getTransfer = async (id) => {
+  const transfer = (await Transfers.getById(pool, id)).rows[0];
+  if (!transfer) return null;
+  const items = (await Transfers.itemsByTransfer(pool, id)).rows;
+  return { ...transfer, items };
+};

@@ -142,3 +142,64 @@ exports.listStock = async (req, res, next) => {
     handleDbError(err, res, next);
   }
 };
+
+// ---- Store stock (คลังที่ 2 ของโรงคั่ว) ----
+exports.listStoreStock = async (req, res, next) => {
+  try {
+    const data = await service.listStoreStock();
+    const lowStockCount = data.filter((r) => r.low_stock).length;
+    res.json({ status: 'ok', count: data.length, low_stock_count: lowStockCount, data });
+  } catch (err) {
+    handleDbError(err, res, next);
+  }
+};
+
+// ---- Transfers (ใบเบิกโอน คลังกลาง ↔ Store) ----
+const LOCATIONS = ['central', 'store'];
+
+exports.createTransfer = async (req, res, next) => {
+  try {
+    const { transfer_no, from_location, to_location, items } = req.body;
+    if (!transfer_no) {
+      return res.status(400).json({ status: 'error', message: 'transfer_no is required' });
+    }
+    if (from_location && !LOCATIONS.includes(from_location)) {
+      return res.status(400).json({ status: 'error', message: `from_location must be one of: ${LOCATIONS.join(', ')}` });
+    }
+    if (to_location && !LOCATIONS.includes(to_location)) {
+      return res.status(400).json({ status: 'error', message: `to_location must be one of: ${LOCATIONS.join(', ')}` });
+    }
+    if (from_location && to_location && from_location === to_location) {
+      return res.status(400).json({ status: 'error', message: 'from_location และ to_location ต้องต่างกัน' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'items must be a non-empty array' });
+    }
+    if (items.some((it) => !it.material_id || it.qty == null || Number(it.qty) <= 0)) {
+      return res.status(400).json({ status: 'error', message: 'each item requires material_id and qty > 0' });
+    }
+    const data = await service.createTransfer(req.body);
+    res.status(201).json({ status: 'ok', data });
+  } catch (err) {
+    handleDbError(err, res, next);
+  }
+};
+
+exports.listTransfers = async (req, res, next) => {
+  try {
+    const data = await service.listTransfers();
+    res.json({ status: 'ok', count: data.length, data });
+  } catch (err) {
+    handleDbError(err, res, next);
+  }
+};
+
+exports.getTransfer = async (req, res, next) => {
+  try {
+    const data = await service.getTransfer(req.params.id);
+    if (!data) return res.status(404).json({ status: 'error', message: 'transfer not found' });
+    res.json({ status: 'ok', data });
+  } catch (err) {
+    handleDbError(err, res, next);
+  }
+};
